@@ -148,7 +148,8 @@ namespace NetTopologySuite.IO
             // Get the current position
             long initialPosition = _writer.BaseStream.Position;
 
-            // the deleted flag
+            // Write a non-deleted record
+            // 0x20 - Not deleted, 0x2A - Deleted record
             _writer.Write((byte)0x20);
             foreach (object columnValue in columnValues)
             {
@@ -446,6 +447,26 @@ namespace NetTopologySuite.IO
         public void WriteEndOfDbf()
         {
             Write((byte)0x1A);
+        }
+
+        /// <summary>
+        /// Truncate the last byte of the file to allow for appending
+        /// </summary>
+        public void DeleteEndOfDbf()
+        {
+            _writer.BaseStream.SetLength(_writer.BaseStream.Length - 1);
+        }
+
+        /// <summary>
+        /// Deletes the end of file marker and set the writer position accordingly for appending
+        /// </summary>
+        public void InitForAppend()
+        {
+            DeleteEndOfDbf();
+            if (_writer.BaseStream.CanSeek)
+            {
+                _writer.BaseStream.Seek(0, SeekOrigin.End);
+            }
         }
     }
 }

@@ -758,7 +758,7 @@ namespace NetTopologySuite.IO.ShapeFile.Test
             var points = Factory.CreateMultiPointFromCoords(coors);
             var feature = new Feature(points, attribs);
 
-            var filename = Path.ChangeExtension(Path.GetTempFileName(), ".shp");
+            string filename = Path.ChangeExtension(Path.GetTempFileName(), ".shp");
             var writer = new ShapefileDataWriter(filename, Factory)
             {
                 Header = ShapefileDataWriter.GetHeader(feature, 1)
@@ -773,6 +773,148 @@ namespace NetTopologySuite.IO.ShapeFile.Test
                 Assert.AreEqual(1, reader.GetOrdinal("Id"));
                 Assert.AreEqual(10, reader.GetInt32(1));
             }
+        }
+
+        [Test]
+        public void TestAppendToExistingShapefile()
+        {
+            // Copy premade single polygon shapefile
+            string filename = "appendtest";
+            if (File.Exists(filename + ".shp"))
+            {
+                File.Delete(filename + ".shp");
+                File.Delete(filename + ".shx");
+                File.Delete(filename + ".dbf");
+            }
+            if (!File.Exists($"{filename}.shp"))
+            {
+                File.Copy("one_polygon.shp", filename + ".shp");
+                File.Copy("one_polygon.shx", filename + ".shx");
+                File.Copy("one_polygon.dbf", filename + ".dbf");
+            }
+
+            // Create second polygon
+            var attribs2 = new AttributesTable
+            {
+                { "Id", 11 },
+                { "Name", "Second" }
+            };
+            var coors2 = new Coordinate[5]
+            {
+                new Coordinate(2, 2),
+                new Coordinate(2, 3),
+                new Coordinate(3, 3),
+                new Coordinate(3, 2),
+                new Coordinate(2, 2)
+            };
+            var poly2 = Factory.CreatePolygon(coors2);
+            var feature2 = new Feature(poly2, attribs2);
+
+            // initialize a new data writer
+            var writer2 = new ShapefileDataWriter(filename, Factory)
+            {
+                Header = ShapefileDataWriter.GetHeader(feature2, 1)
+            };
+            writer2.Write(new[] { feature2 }, true);
+
+            // Read and assert both first and second are there
+            var reader = new ShapefileDataReader(filename, Factory);
+            bool foundFirst = false;
+            bool foundSecond = false;
+            while (reader.Read())
+            {
+                Assert.IsNotNull(reader.Geometry);
+                Assert.IsInstanceOf<Polygon>(reader.Geometry);
+                int idIndex = reader.GetOrdinal("Id");
+                if (reader.GetInt32(idIndex) == 10)
+                {
+                    int nameIndex = reader.GetOrdinal("Name");
+                    Assert.AreEqual("First", reader.GetString(nameIndex));
+                    foundFirst = true;
+                }
+
+                if (reader.GetInt32(idIndex) == 11)
+                {
+                    int nameIndex = reader.GetOrdinal("Name");
+                    Assert.AreEqual("Second", reader.GetString(nameIndex));
+                    foundSecond = true;
+                }
+            }
+
+            Assert.IsTrue(foundFirst);
+            Assert.IsTrue(foundSecond);
+            // Compare with a file that was written in a single write
+            Assert.IsTrue(CompareFiles(filename + ".shp", "two_polygons.shp"));
+            Assert.IsTrue(CompareFiles(filename + ".shx", "two_polygons.shx"));
+            Assert.IsTrue(CompareFiles(filename + ".dbf", "two_polygons.dbf"));
+        }
+
+        [Test]
+        public void AppendMultipleFeaturesTest()
+        {
+            // string filename = "appendfivetest";
+            string filename = "five_polygons_appended";
+            if (File.Exists(filename + ".shp"))
+            {
+                File.Delete(filename + ".shp");
+                File.Delete(filename + ".shx");
+                File.Delete(filename + ".dbf");
+            }
+            if (!File.Exists($"{filename}.shp"))
+            {
+                File.Copy("five_polygons_base.shp", filename + ".shp");
+                File.Copy("five_polygons_base.shx", filename + ".shx");
+                File.Copy("five_polygons_base.dbf", filename + ".dbf");
+            }
+
+            var features = new List<Feature>();
+            for (int i = 1; i < 5; i++)
+            {
+                var coords = new Coordinate[5]
+                {
+                    new Coordinate(i + 1, i + 1),
+                    new Coordinate(i + 1, i + 2),
+                    new Coordinate(i + 2, i + 2),
+                    new Coordinate(i + 2, i + 1),
+                    new Coordinate(i + 1, i + 1),
+                };
+                var poly = Factory.CreatePolygon(coords);
+                var attr = new AttributesTable
+                {
+                    {"Id", i + 10},
+                    {"Name", "Polygon " + i}
+                };
+                var feature = new Feature(poly, attr);
+                features.Add(feature);
+            }
+
+            var writer2 = new ShapefileDataWriter(filename, Factory)
+            {
+                Header = ShapefileDataWriter.GetHeader(features[0], 1)
+            };
+            writer2.Write(features, true);
+
+            Assert.IsTrue(CompareFiles(filename + ".shp", "five_polygons.shp"));
+            Assert.IsTrue(CompareFiles(filename + ".shx", "five_polygons.shx"));
+            Assert.IsTrue(CompareFiles(filename + ".dbf", "five_polygons.dbf"));
+        }
+
+        private static bool CompareFiles(string path1, string path2)
+        {
+            byte[] file1 = File.ReadAllBytes(path1);
+            byte[] file2 = File.ReadAllBytes(path2);
+            if (file1.Length == file2.Length)
+            {
+                for (int i = 0; i < file1.Length; i++)
+                {
+                    if (file1[i] != file2[i])
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            return false;
         }
     }
 }

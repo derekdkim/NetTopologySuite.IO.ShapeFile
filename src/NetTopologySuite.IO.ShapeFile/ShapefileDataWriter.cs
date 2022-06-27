@@ -19,19 +19,19 @@ namespace NetTopologySuite.IO
         /// Gets the stub header.
         /// </summary>
         /// <param name="feature">The feature.</param>
-        /// <param name="count">The count.</param>         
+        /// <param name="count">The count.</param>
         /// <returns></returns>
         public static DbaseFileHeader GetHeader(IFeature feature, int count)
         {
             return GetHeader(feature, count, null);
-        }    
-        
+        }
+
         /// <summary>
         /// Gets the stub header.
         /// </summary>
         /// <param name="feature">The feature.</param>
         /// <param name="count">The count.</param>
-        /// <param name="encoding">The encoding.</param>            
+        /// <param name="encoding">The encoding.</param>
         /// <returns></returns>
         public static DbaseFileHeader GetHeader(IFeature feature, int count, Encoding encoding)
         {
@@ -160,7 +160,7 @@ namespace NetTopologySuite.IO
 
         }
 
-        public ShapefileDataWriter(IStreamProviderRegistry streamProviderRegistry, GeometryFactory geometryFactory, Encoding encoding)
+        public ShapefileDataWriter(IStreamProviderRegistry streamProviderRegistry, GeometryFactory geometryFactory, Encoding encoding, bool appendMode = false)
         {
             _geometryFactory = geometryFactory;
 
@@ -174,7 +174,7 @@ namespace NetTopologySuite.IO
         /// Writes the specified feature collection.
         /// </summary>
         /// <param name="featureCollection">The feature collection.</param>
-        public void Write(IEnumerable<IFeature> featureCollection)
+        public void Write(IEnumerable<IFeature> featureCollection, bool appendMode = false)
         {
             // Test if the Header is initialized
             if (Header is null)
@@ -197,13 +197,24 @@ namespace NetTopologySuite.IO
 
                 var shapeFileType = Shapefile.GetShapeType(representativeGeometry);
                 using (_dbaseWriter)
-                using (var shapefileWriter = new ShapefileWriter(_geometryFactory, _streamProviderRegistry, shapeFileType))
+                using (var shapefileWriter = new ShapefileWriter(_geometryFactory, _streamProviderRegistry, shapeFileType, appendMode))
                 {
+                    if (appendMode)
+                    {
+                        _dbaseWriter.InitForAppend();
+                    }
                     _dbaseWriter.Write(Header);
                     string[] fieldNames = Array.ConvertAll(Header.Fields, field => field.Name);
                     object[] values = new object[fieldNames.Length];
 
+                    // Set the current number of records in append mode
                     int numFeatures = 0;
+                    if (appendMode)
+                    {
+                        // Set up for appending
+                        numFeatures = shapefileWriter.NumFeaturesWritten;
+                    }
+
                     // first, write the one(s) that we scanned already.
                     foreach (var feature in headFeatures)
                     {
@@ -240,5 +251,7 @@ namespace NetTopologySuite.IO
                 }
             }
         }
+
+
     }
 }

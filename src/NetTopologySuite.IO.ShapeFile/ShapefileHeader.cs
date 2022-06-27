@@ -124,20 +124,29 @@ namespace NetTopologySuite.IO
         /// Writes a shapefile header to the given stream;
         /// </summary>
         /// <param name="file">The binary writer to use.</param>
-        public void Write(BigEndianBinaryWriter file)
+        public void Write(BigEndianBinaryWriter file, bool appendMode = false)
         {
             if (file == null)
                 throw new ArgumentNullException("file");
             if (_fileLength==-1)
                 throw new InvalidOperationException("The header properties need to be set before writing the header record.");
+            if (appendMode)
+            {
+                file.Seek(0, 0);
+            }
+
+            // Write a brand new header from scratch
             int pos = 0;
+            // Byte 0: File Code
             file.WriteIntBE(_fileCode);
             pos += 4;
+            // Byte 4 - Byte 23: Unused
             for (int i = 0; i < 5; i++)
             {
                 file.WriteIntBE(0);//Skip unused part of header
                 pos += 4;
             }
+            // Byte 24: File Length
             file.WriteIntBE(_fileLength);
             pos += 4;
             file.Write(_version);
@@ -146,6 +155,10 @@ namespace NetTopologySuite.IO
             string format = EnumUtility.Format(typeof(ShapeGeometryType), _shapeType, "d");
             file.Write(int.Parse(format));
 
+            // Byte 36: Bounding Box Xmin
+            // Byte 44: Bounding Box Ymin
+            // Byte 52: Bounding Box Xmax
+            // Byte 60: Bounding Box Ymax
             pos += 4;
             // Write the bounding box
             file.Write(_bounds.MinX);

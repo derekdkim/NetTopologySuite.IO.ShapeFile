@@ -20,6 +20,8 @@ namespace NetTopologySuite.IO
         private BigEndianBinaryWriter _shpBinaryWriter;
         private Stream _shxStream;
         private BigEndianBinaryWriter _shxBinaryWriter;
+        private ShapefileReader _shapefileReader;
+        private ShapefileHeader _prevHeader;
 
         private Envelope _totalEnvelope;
 
@@ -27,6 +29,13 @@ namespace NetTopologySuite.IO
         private readonly ShapeGeometryType _geometryType;
 
         private int _numFeaturesWritten;
+        private bool _appendMode;
+
+        public int NumFeaturesWritten
+        {
+            get => _numFeaturesWritten;
+            set => _numFeaturesWritten = value;
+        }
 
         /// <summary>
         /// Initializes a buffered writer where you can write shapes individually to the file.
@@ -45,22 +54,48 @@ namespace NetTopologySuite.IO
         }
 
         public ShapefileWriter(GeometryFactory geometryFactory, IStreamProviderRegistry streamProviderRegistry,
-            ShapeGeometryType geomType)
+            ShapeGeometryType geomType, bool append = false)
             : this(geometryFactory)
         {
+            if (append)
+            {
+                // Required for determining the number of elements, bounding box
+                _shapefileReader = new ShapefileReader(streamProviderRegistry, geometryFactory);
+                _prevHeader = _shapefileReader.Header;
 
-            _shpStream = streamProviderRegistry[StreamTypes.Shape].OpenWrite(true);
-            _shxStream = streamProviderRegistry[StreamTypes.Index]?.OpenWrite(true);
+                _appendMode = true;
+                _shpStream = streamProviderRegistry[StreamTypes.Shape].OpenWrite(false);
+                _shxStream = streamProviderRegistry[StreamTypes.Index]?.OpenWrite(false);
+                NumFeaturesWritten = GetNumRecordsFromIndex();
+            }
+            else
+            {
+                // Truncate if not in append mode
+                _shpStream = streamProviderRegistry[StreamTypes.Shape].OpenWrite(true);
+                _shxStream = streamProviderRegistry[StreamTypes.Index]?.OpenWrite(true);
+            }
 
             _geometryType = geomType;
 
             _shpBinaryWriter = new BigEndianBinaryWriter(_shpStream);
 
-            WriteShpHeader(_shpBinaryWriter, 0, new Envelope(0, 0, 0, 0));
-            if (_shxStream != null)
+            if (append)
             {
-                _shxBinaryWriter = new BigEndianBinaryWriter(_shxStream);
-                WriteShxHeader(_shxBinaryWriter, 0, new Envelope(0, 0, 0, 0));
+                WriteShpHeader(_shpBinaryWriter, _prevHeader.FileLength, _prevHeader.Bounds);
+                if (_shxStream != null)
+                {
+                    _shxBinaryWriter = new BigEndianBinaryWriter(_shxStream);
+                    WriteShxHeader(_shxBinaryWriter, _prevHeader.FileLength, _prevHeader.Bounds);
+                }
+            }
+            else
+            {
+                WriteShpHeader(_shpBinaryWriter, 0, new Envelope(0, 0, 0, 0));
+                if (_shxStream != null)
+                {
+                    _shxBinaryWriter = new BigEndianBinaryWriter(_shxStream);
+                    WriteShxHeader(_shxBinaryWriter, 0, new Envelope(0, 0, 0, 0));
+                }
             }
 
             _shapeHandler = Shapefile.GetShapeHandler(geomType);
@@ -133,10 +168,19 @@ namespace NetTopologySuite.IO
             _numFeaturesWritten++;
 
             var env = geometry.EnvelopeInternal;
+
             var bounds = ShapeHandler.GetEnvelopeExternal(geometry.PrecisionModel, env);
             if (_totalEnvelope == null)
             {
-                _totalEnvelope = bounds;
+                if (_appendMode)
+                {
+                    _prevHeader.Bounds.ExpandToInclude(bounds);
+                    _totalEnvelope = _prevHeader.Bounds;
+                }
+                else
+                {
+                    _totalEnvelope = bounds;
+                }
             }
             else
             {
@@ -215,7 +259,7 @@ namespace NetTopologySuite.IO
 
         }
 
-        private static /*int*/ void WriteRecordToFile(BigEndianBinaryWriter shpBinaryWriter,
+        private /*int*/ void WriteRecordToFile(BigEndianBinaryWriter shpBinaryWriter,
             BigEndianBinaryWriter shxBinaryWriter, ShapeHandler handler, Geometry body, int oid)
         {
             if (body == null || body.IsEmpty)
@@ -230,13 +274,22 @@ namespace NetTopologySuite.IO
             // Get the position in the stream, needed for shxBinaryWriter; since
             // shpBinaryWriter.BaseStream flushes pending writes, only fetch it
             // if we're going to actually touch the shx file.
+            if (_appendMode)
+            {
+                shpBinaryWriter.Seek(0, SeekOrigin.End);
+            }
             long posWords = shxBinaryWriter == null ? 0 : shpBinaryWriter.BaseStream.Position / 2;
+
             shpBinaryWriter.WriteIntBE(oid);
             shpBinaryWriter.WriteIntBE(recordLength);
 
             // update shapefile index (position in words, 1 word = 2 bytes)
             if (shxBinaryWriter != null)
             {
+                if (_appendMode)
+                {
+                    shxBinaryWriter.Seek(0, SeekOrigin.End);
+                }
                 shxBinaryWriter.WriteIntBE((int)posWords);
                 shxBinaryWriter.WriteIntBE(recordLength);
             }
@@ -262,7 +315,7 @@ namespace NetTopologySuite.IO
 
             // assumes Geometry type of the first item will the same for all other items in the collection.
             if (shxBinaryWriter != null)
-                shxHeader.Write(shxBinaryWriter);
+                shxHeader.Write(shxBinaryWriter, _appendMode);
         }
 
         private void WriteShpHeader(BigEndianBinaryWriter shpBinaryWriter, int shpLength, Envelope bounds)
@@ -276,7 +329,7 @@ namespace NetTopologySuite.IO
 
             // assumes Geometry type of the first item will the same for all other items
             // in the collection.
-            shpHeader.Write(shpBinaryWriter);
+            shpHeader.Write(shpBinaryWriter, _appendMode);
         }
 
         /// <summary>
@@ -393,6 +446,20 @@ namespace NetTopologySuite.IO
                     dbfWriter.Close();
                 }
             }
+        }
+
+        /// <summary>
+        /// Obtains the number of records currently written in the shapefiles.
+        /// shx has a predictable structure where first 100 bytes is the header, then every subsequent 8 bytes represents 1 record
+        /// Useful for determining number of records without reading through each line in the file.
+        /// </summary>
+        /// <param name="registry"></param>
+        /// <returns></returns>
+        private int GetNumRecordsFromIndex()
+        {
+            long byteLen = _shxStream.Length;
+
+            return (int)(byteLen - 100) / 8;
         }
     }
 }
